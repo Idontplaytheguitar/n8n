@@ -1,0 +1,382 @@
+{
+  "name": "Google Maps 5-Star Reviews Scraper",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reviews",
+        "options": {}
+      },
+      "id": "trigger-webhook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 520],
+      "webhookId": "reviews-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "apify-token",
+              "name": "apifyApiToken",
+              "value": "YOUR_APIFY_API_TOKEN_HERE",
+              "type": "string"
+            },
+            {
+              "id": "google-maps-url",
+              "name": "googleMapsUrl",
+              "value": "https://www.google.com/maps/place/YOUR_PLACE_ID_HERE",
+              "type": "string"
+            },
+            {
+              "id": "max-reviews",
+              "name": "maxReviews",
+              "value": 100,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-config",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/compass~crawler-google-places/run-sync-get-dataset-items",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "={{ $json.apifyApiToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"startUrls\": [\n    {\n      \"url\": \"{{ $json.googleMapsUrl }}\"\n    }\n  ],\n  \"maxReviews\": {{ $json.maxReviews }},\n  \"reviewsSort\": \"newest\",\n  \"language\": \"en\",\n  \"scrapeReviewerName\": true,\n  \"scrapeReviewerId\": true,\n  \"scrapeReviewerUrl\": true,\n  \"scrapeReviewId\": true,\n  \"scrapeReviewUrl\": true,\n  \"scrapeResponseFromOwnerText\": true\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "apify-request",
+      "name": "Fetch Reviews from Apify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst allReviews = [];\n\nfor (const item of items) {\n  const place = item.json;\n  \n  if (place.reviews && Array.isArray(place.reviews)) {\n    for (const review of place.reviews) {\n      allReviews.push({\n        placeName: place.title || place.name || 'Unknown Place',\n        placeAddress: place.address || '',\n        placeUrl: place.url || '',\n        reviewerName: review.name || review.reviewer || 'Anonymous',\n        reviewerId: review.reviewerId || '',\n        reviewerUrl: review.reviewerUrl || '',\n        stars: review.stars || review.rating || 0,\n        reviewText: review.text || review.snippet || '',\n        publishedAtDate: review.publishedAtDate || review.date || '',\n        reviewId: review.reviewId || '',\n        reviewUrl: review.reviewUrl || '',\n        ownerResponse: review.responseFromOwnerText || null\n      });\n    }\n  }\n}\n\nreturn allReviews.map(review => ({ json: review }));"
+      },
+      "id": "extract-reviews",
+      "name": "Extract Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "filter-5-stars",
+              "leftValue": "={{ $json.stars }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-5-star",
+      "name": "Filter 5-Star Only",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.all().map(item => item.json);\n\nconst output = {\n  exportedAt: new Date().toISOString(),\n  totalReviews: reviews.length,\n  filterCriteria: '5-star reviews only',\n  reviews: reviews\n};\n\nreturn [{ json: output }];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.all().map(item => item.json);\nconst timestamp = new Date().toISOString().replace(/[:.]/g, '-');\n\nconst output = {\n  exportedAt: new Date().toISOString(),\n  totalReviews: reviews.length,\n  filterCriteria: '5-star reviews only',\n  reviews: reviews\n};\n\nconst jsonString = JSON.stringify(output, null, 2);\nconst fileName = `positive-reviews-${timestamp}.json`;\n\nreturn [{\n  json: {\n    fileName: fileName,\n    reviewCount: reviews.length,\n    exportedAt: output.exportedAt\n  },\n  binary: {\n    data: await this.helpers.prepareBinaryData(\n      Buffer.from(jsonString, 'utf8'),\n      fileName,\n      'application/json'\n    )\n  }\n}];"
+      },
+      "id": "prepare-export",
+      "name": "Prepare JSON Export",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 80]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/output/{{ $json.fileName }}",
+        "dataPropertyName": "data"
+      },
+      "id": "write-file",
+      "name": "Save to JSON File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1320, 80]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-message",
+              "name": "message",
+              "value": "=Successfully exported {{ $('Prepare JSON Export').item.json.reviewCount }} positive reviews to {{ $('Prepare JSON Export').item.json.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "file-path",
+              "name": "filePath",
+              "value": "=/home/node/output/{{ $('Prepare JSON Export').item.json.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "exported-at",
+              "name": "exportedAt",
+              "value": "={{ $('Prepare JSON Export').item.json.exportedAt }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "success-output",
+      "name": "Success Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1540, 80]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Webhook Trigger').isExecuted }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "webhook"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Manual Trigger').isExecuted }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "manual"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "route-output",
+      "name": "Route Output",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [880, 80]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Fetch Reviews from Apify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Reviews from Apify": {
+      "main": [
+        [
+          {
+            "node": "Extract Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Reviews": {
+      "main": [
+        [
+          {
+            "node": "Filter 5-Star Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter 5-Star Only": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Route Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Output": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare JSON Export",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare JSON Export": {
+      "main": [
+        [
+          {
+            "node": "Save to JSON File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to JSON File": {
+      "main": [
+        [
+          {
+            "node": "Success Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-20T00:00:00.000Z",
+  "versionId": "2"
+}
