@@ -13,6 +13,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "reviews",
+        "responseMode": "lastNode",
         "options": {}
       },
       "id": "trigger-webhook",
